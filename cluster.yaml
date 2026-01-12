@@ -1,0 +1,46 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: my-eks-cluster
+  region: ap-northeast-2
+  version: "1.34"
+
+vpc:
+  id: "vpc-0a3dfcadad1198b47"
+  subnets:
+    public:
+      ap-northeast-2a:
+        id: "subnet-06fc48664dbcea2b9"
+      ap-northeast-2b:
+        id: "subnet-02996318e5723b720"
+    private:
+      ap-northeast-2a:
+        id: "subnet-083e8aee43ca6912e"
+      ap-northeast-2b:
+        id: "subnet-02ed305a4f285318c"
+
+nodeGroups:
+  - name: worker-nodes
+    instanceType: t3.medium
+    desiredCapacity: 2
+    minSize: 1
+    maxSize: 4
+    volumeSize: 20
+    volumeType: gp3
+    ssh:
+      allow: true
+    iam:
+      withAddonPolicies:
+        imageBuilder: true
+        autoScaler: true
+        ebs: true
+        efs: true
+        albIngress: true
+        cloudWatch: true
+
+addons:
+  - name: vpc-cni
+  - name: coredns
+  - name: kube-proxy
+  - name: aws-ebs-csi-driver

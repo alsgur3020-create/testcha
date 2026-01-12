@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+      - name: backend
+        image: 101553892293.dkr.ecr.ap-northeast-2.amazonaws.com/back:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: host
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: password
+        - name: DB_NAME
+          value: "myapp"
+        command: ["sh", "-c"]
+        args: ["mkdir -p /tmp/app && cp /app/* /tmp/app/ && cd /tmp/app && npm install && node server.js"]
+        volumeMounts:
+        - name: backend-code
+          mountPath: /app
+        workingDir: /tmp/app
+      volumes:
+      - name: backend-code
+        configMap:
+          name: backend-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+spec:
+  selector:
+    app: backend
+  ports:
+  - port: 3000
+    targetPort: 3000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+data:
+  server.js: |
+    const express = require('express');
+    const app = express();
+    const port = 3000;
+
+    app.use(express.json());
+
+    app.get('/api/health', (req, res) => {
+      res.json({ status: 'Backend Pod Running', timestamp: new Date() });
+    });
+
+    app.get('/api/data', (req, res) => {
+      res.json({ 
+        message: 'Data from backend',
+        database: process.env.DB_HOST || 'Not connected'
+      });
+    });
+
+    app.listen(port, () => {
+      console.log(`Backend running on port ${port}`);
+    });
+  package.json: |
+    {
+      "name": "backend",
+      "version": "1.0.0",
+      "main": "server.js",
+      "dependencies": {
+        "express": "^4.18.0"
+      }
+    }

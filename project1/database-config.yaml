@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-secret
+type: Opaque
+data:
+  # Base64 encoded values - replace with your actual RDS credentials
+  host: ZGF0YWJhc2UtMS5jM3lrbzR3c2E1bHMuYXAtbm9ydGhlYXN0LTIucmRzLmFtYXpvbmF3cy5jb20=
+  username: YWRtaW4=
+  password: ODk3OHRrZGg=
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-init
+data:
+  init.sql: |
+    CREATE DATABASE IF NOT EXISTS myapp;
+    USE myapp;
+    
+    CREATE TABLE IF NOT EXISTS users (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      email VARCHAR(100) UNIQUE NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    INSERT INTO users (name, email) VALUES 
+    ('John Doe', 'john@example.com'),
+    ('Jane Smith', 'jane@example.com')
+    ON DUPLICATE KEY UPDATE name=name;
