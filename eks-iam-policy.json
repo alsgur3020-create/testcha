@@ -26,16 +26,26 @@
         "eks:DescribeNodegroup",
         "eks:ListNodegroups",
         "eks:DescribeUpdate",
-        "eks:ListUpdates"
+        "eks:ListUpdates",
+        "eks:AccessKubernetesApi"
       ],
       "Resource": "*"
     },
     {
       "Effect": "Allow",
       "Action": [
-        "sts:GetCallerIdentity"
+        "sts:GetCallerIdentity",
+        "sts:AssumeRole"
       ],
       "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:ListAttachedRolePolicies"
+      ],
+      "Resource": "arn:aws:iam::101553892293:role/GitHubActions-ECR-EKS-Role"
     }
   ]
 }
