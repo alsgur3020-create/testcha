@@ -1,0 +1,111 @@
+name: Deploy 3-Tier App to EKS
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REGISTRY: 101553892293.dkr.ecr.ap-northeast-2.amazonaws.com
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: project1/backend/package.json
+    
+    - name: Install backend dependencies
+      run: |
+        cd project1/backend
+        npm install
+    
+    - name: Run backend tests
+      run: |
+        cd project1/backend
+        npm test
+
+  build-and-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Login to ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+    
+    - name: Build and push Backend image
+      run: |
+        cd project1/backend
+        docker build -t ${{ env.ECR_REGISTRY }}/back:${{ github.sha }} .
+        docker push ${{ env.ECR_REGISTRY }}/back:${{ github.sha }}
+        docker tag ${{ env.ECR_REGISTRY }}/back:${{ github.sha }} ${{ env.ECR_REGISTRY }}/back:latest
+        docker push ${{ env.ECR_REGISTRY }}/back:latest
+    
+    - name: Build and push Frontend image
+      run: |
+        cd project1/frontend
+        docker build -t ${{ env.ECR_REGISTRY }}/front:${{ github.sha }} .
+        docker push ${{ env.ECR_REGISTRY }}/front:${{ github.sha }}
+        docker tag ${{ env.ECR_REGISTRY }}/front:${{ github.sha }} ${{ env.ECR_REGISTRY }}/front:latest
+        docker push ${{ env.ECR_REGISTRY }}/front:latest
+    
+    - name: Update kubeconfig
+      run: |
+        aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ secrets.EKS_CLUSTER_NAME }}
+    
+    - name: Deploy to EKS
+      run: |
+        # Update image tags in deployment files
+        sed -i "s|:latest|:${{ github.sha }}|g" project1/backend-deployment.yaml
+        sed -i "s|:latest|:${{ github.sha }}|g" project1/frontend-deployment.yaml
+        
+        # Apply Kubernetes manifests
+        kubectl apply -f project1/database-config.yaml
+        kubectl apply -f project1/backend-deployment.yaml
+        kubectl apply -f project1/frontend-deployment.yaml
+        kubectl apply -f project1/ingress.yaml
+        
+        # Wait for deployments to be ready
+        kubectl rollout status deployment/backend --timeout=300s
+        kubectl rollout status deployment/frontend --timeout=300s
+    
+    - name: Verify deployment
+      run: |
+        kubectl get pods -l app=backend
+        kubectl get pods -l app=frontend
+        kubectl get svc
+        kubectl get ingress
+        
+    - name: Run smoke tests
+      run: |
+        # Get the load balancer URL
+        LB_URL=$(kubectl get ingress app-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+        echo "Testing application at: http://$LB_URL"
+        
+        # Wait for load balancer to be ready
+        sleep 60
+        
+        # Test backend health
+        curl -f "http://$LB_URL/api/health" || echo "Backend health check failed"
+        
+        # Test frontend
+        curl -f "http://$LB_URL/" || echo "Frontend check failed"

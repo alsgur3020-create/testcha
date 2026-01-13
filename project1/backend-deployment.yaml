@@ -5,7 +5,7 @@ metadata:
   labels:
     app: backend
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: backend
@@ -22,6 +22,8 @@ spec:
         env:
         - name: NODE_ENV
           value: "production"
+        - name: PORT
+          value: "3000"
         - name: DB_HOST
           valueFrom:
             secretKeyRef:
@@ -39,16 +41,25 @@ spec:
               key: password
         - name: DB_NAME
           value: "myapp"
-        command: ["sh", "-c"]
-        args: ["mkdir -p /tmp/app && cp /app/* /tmp/app/ && cd /tmp/app && npm install && node server.js"]
-        volumeMounts:
-        - name: backend-code
-          mountPath: /app
-        workingDir: /tmp/app
-      volumes:
-      - name: backend-code
-        configMap:
-          name: backend-config
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
 ---
 apiVersion: v1
 kind: Service
@@ -61,39 +72,3 @@ spec:
   - port: 3000
     targetPort: 3000
   type: ClusterIP
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: backend-config
-data:
-  server.js: |
-    const express = require('express');
-    const app = express();
-    const port = 3000;
-
-    app.use(express.json());
-
-    app.get('/api/health', (req, res) => {
-      res.json({ status: 'Backend Pod Running', timestamp: new Date() });
-    });
-
-    app.get('/api/data', (req, res) => {
-      res.json({ 
-        message: 'Data from backend',
-        database: process.env.DB_HOST || 'Not connected'
-      });
-    });
-
-    app.listen(port, () => {
-      console.log(`Backend running on port ${port}`);
-    });
-  package.json: |
-    {
-      "name": "backend",
-      "version": "1.0.0",
-      "main": "server.js",
-      "dependencies": {
-        "express": "^4.18.0"
-      }
-    }
