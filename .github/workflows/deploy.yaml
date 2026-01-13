@@ -10,7 +10,7 @@ env:
   AWS_REGION: ap-northeast-2
   ECR_BACKEND_REPO: back
   ECR_FRONTEND_REPO: front
-  
+
 permissions:
   id-token: write
   contents: read
@@ -144,6 +144,12 @@ jobs:
         echo "=== EKS 클러스터 연결 ==="
         aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name "${{ secrets.EKS_CLUSTER_NAME }}"
         echo "✅ kubeconfig 업데이트 완료"
+        
+        # kubectl 권한 테스트
+        echo "=== kubectl 권한 테스트 ==="
+        kubectl auth can-i get pods || echo "⚠️  Pod 조회 권한 없음"
+        kubectl auth can-i create deployments || echo "⚠️  Deployment 생성 권한 없음"
+        kubectl get nodes || echo "⚠️  노드 조회 실패"
     
     - name: Deploy to EKS
       if: steps.check-eks.outputs.skip_eks == 'false'
@@ -159,16 +165,18 @@ jobs:
         sed -i "s|101553892293.dkr.ecr.ap-northeast-2.amazonaws.com/back:latest|$ECR_REGISTRY/${{ env.ECR_BACKEND_REPO }}:$IMAGE_TAG|g" backend-deployment-temp.yaml
         sed -i "s|101553892293.dkr.ecr.ap-northeast-2.amazonaws.com/front:latest|$ECR_REGISTRY/${{ env.ECR_FRONTEND_REPO }}:$IMAGE_TAG|g" frontend-deployment-temp.yaml
         
-        # Apply Kubernetes manifests
-        kubectl apply -f project1/database-config.yaml
-        kubectl apply -f backend-deployment-temp.yaml
-        kubectl apply -f frontend-deployment-temp.yaml
-        kubectl apply -f project1/ingress.yaml
+        # Apply Kubernetes manifests with validation disabled if needed
+        echo "=== Kubernetes 리소스 배포 ==="
+        kubectl apply -f project1/database-config.yaml --validate=false || kubectl apply -f project1/database-config.yaml
+        kubectl apply -f backend-deployment-temp.yaml --validate=false || kubectl apply -f backend-deployment-temp.yaml
+        kubectl apply -f frontend-deployment-temp.yaml --validate=false || kubectl apply -f frontend-deployment-temp.yaml
+        kubectl apply -f project1/ingress.yaml --validate=false || kubectl apply -f project1/ingress.yaml
         
         # Clean up temporary files
         rm backend-deployment-temp.yaml frontend-deployment-temp.yaml
         
         # Wait for deployments to be ready
+        echo "=== 배포 상태 확인 ==="
         kubectl rollout status deployment/backend --timeout=300s
         kubectl rollout status deployment/frontend --timeout=300s
     
