@@ -158,7 +158,7 @@ jobs:
             
             # AWS 토큰 생성 테스트
             echo "AWS EKS 토큰 생성 테스트:"
-            if aws eks get-token --cluster-name "${{ secrets.EKS_CLUSTER_NAME }}" --region ${{ env.AWS_REGION }}" > /dev/null 2>&1; then
+            if aws eks get-token --cluster-name "${{ secrets.EKS_CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}" > /dev/null 2>&1; then
               echo "✅ AWS EKS 토큰 생성 성공"
             else
               echo "❌ AWS EKS 토큰 생성 실패"
@@ -176,7 +176,7 @@ jobs:
               
               # 방법 2: 명시적 토큰 갱신 후 재시도
               echo "AWS EKS 토큰 갱신 중..."
-              aws eks get-token --cluster-name "${{ secrets.EKS_CLUSTER_NAME }}" --region ${{ env.AWS_REGION }}" > /tmp/token.json || echo "토큰 갱신 실패"
+              aws eks get-token --cluster-name "${{ secrets.EKS_CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}" > /tmp/token.json || echo "토큰 갱신 실패"
               
               # 방법 3: kubeconfig 재생성
               echo "kubeconfig 재생성 중..."
@@ -203,7 +203,7 @@ jobs:
                 echo "클러스터 엔드포인트: $CLUSTER_ENDPOINT"
                 
                 echo "4. AWS EKS 토큰 생성 테스트:"
-                aws eks get-token --cluster-name "${{ secrets.EKS_CLUSTER_NAME }}" --region ${{ env.AWS_REGION }} --query 'status.token' --output text | head -c 50 || echo "토큰 생성 실패"
+                aws eks get-token --cluster-name "${{ secrets.EKS_CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}" --query 'status.token' --output text | head -c 50 || echo "토큰 생성 실패"
                 echo "..."
                 
                 echo "5. 클러스터 연결 테스트:"
