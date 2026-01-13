@@ -1,24 +1,14 @@
 FROM nginx:alpine
 
-# Copy custom nginx config
-COPY nginx.conf /etc/nginx/nginx.conf
-
 # Copy static files
 COPY index.html /usr/share/nginx/html/
 
-# Create non-root user
-RUN addgroup -g 1001 -S nginx
-RUN adduser -S nginx -u 1001
+# Copy custom nginx config
+COPY nginx.conf /etc/nginx/nginx.conf
 
-# Change ownership
+# nginx는 기본적으로 root로 실행되지만, worker process는 nginx 사용자로 실행됩니다.
+# 보안을 위해 필요한 권한만 설정
 RUN chown -R nginx:nginx /usr/share/nginx/html
-RUN chown -R nginx:nginx /var/cache/nginx
-RUN chown -R nginx:nginx /var/log/nginx
-RUN chown -R nginx:nginx /etc/nginx/conf.d
-RUN touch /var/run/nginx.pid
-RUN chown -R nginx:nginx /var/run/nginx.pid
-
-USER nginx
 
 EXPOSE 8080
 
