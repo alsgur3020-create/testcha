@@ -8,10 +8,8 @@ on:
 
 env:
   AWS_REGION: ap-northeast-2
-  ECR_REGISTRY: 101553892293.dkr.ecr.ap-northeast-2.amazonaws.com
-  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+  ECR_BACKEND_REPO: back
+  ECR_FRONTEND_REPO: front
 
 jobs:
   test:
@@ -84,38 +82,84 @@ jobs:
     - name: Login to ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
+      with:
+        registry-type: private
+    
+    - name: Set ECR registry
+      id: ecr-registry
+      run: |
+        echo "registry=${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_OUTPUT
+        echo "ECR Registry: ${{ steps.login-ecr.outputs.registry }}"
+    
+    - name: Create ECR repositories if they don't exist
+      run: |
+        # Create backend repository
+        aws ecr describe-repositories --repository-names ${{ env.ECR_BACKEND_REPO }} --region ${{ env.AWS_REGION }} || \
+        aws ecr create-repository --repository-name ${{ env.ECR_BACKEND_REPO }} --region ${{ env.AWS_REGION }}
+        
+        # Create frontend repository
+        aws ecr describe-repositories --repository-names ${{ env.ECR_FRONTEND_REPO }} --region ${{ env.AWS_REGION }} || \
+        aws ecr create-repository --repository-name ${{ env.ECR_FRONTEND_REPO }} --region ${{ env.AWS_REGION }}
     
     - name: Build and push Backend image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
       run: |
         cd project1/backend
-        docker build -t ${{ env.ECR_REGISTRY }}/back:${{ github.sha }} .
-        docker push ${{ env.ECR_REGISTRY }}/back:${{ github.sha }}
-        docker tag ${{ env.ECR_REGISTRY }}/back:${{ github.sha }} ${{ env.ECR_REGISTRY }}/back:latest
-        docker push ${{ env.ECR_REGISTRY }}/back:latest
+        
+        # Build image
+        docker build -t $ECR_REGISTRY/${{ env.ECR_BACKEND_REPO }}:$IMAGE_TAG .
+        docker build -t $ECR_REGISTRY/${{ env.ECR_BACKEND_REPO }}:latest .
+        
+        # Push images
+        docker push $ECR_REGISTRY/${{ env.ECR_BACKEND_REPO }}:$IMAGE_TAG
+        docker push $ECR_REGISTRY/${{ env.ECR_BACKEND_REPO }}:latest
+        
+        echo "Backend image pushed: $ECR_REGISTRY/${{ env.ECR_BACKEND_REPO }}:$IMAGE_TAG"
     
     - name: Build and push Frontend image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
       run: |
         cd project1/frontend
-        docker build -t ${{ env.ECR_REGISTRY }}/front:${{ github.sha }} .
-        docker push ${{ env.ECR_REGISTRY }}/front:${{ github.sha }}
-        docker tag ${{ env.ECR_REGISTRY }}/front:${{ github.sha }} ${{ env.ECR_REGISTRY }}/front:latest
-        docker push ${{ env.ECR_REGISTRY }}/front:latest
+        
+        # Build image
+        docker build -t $ECR_REGISTRY/${{ env.ECR_FRONTEND_REPO }}:$IMAGE_TAG .
+        docker build -t $ECR_REGISTRY/${{ env.ECR_FRONTEND_REPO }}:latest .
+        
+        # Push images
+        docker push $ECR_REGISTRY/${{ env.ECR_FRONTEND_REPO }}:$IMAGE_TAG
+        docker push $ECR_REGISTRY/${{ env.ECR_FRONTEND_REPO }}:latest
+        
+        echo "Frontend image pushed: $ECR_REGISTRY/${{ env.ECR_FRONTEND_REPO }}:$IMAGE_TAG"
     
     - name: Update kubeconfig
       run: |
         aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ secrets.EKS_CLUSTER_NAME }}
     
     - name: Deploy to EKS
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
       run: |
+        # Create temporary deployment files with updated image tags
+        cp project1/backend-deployment.yaml backend-deployment-temp.yaml
+        cp project1/frontend-deployment.yaml frontend-deployment-temp.yaml
+        
         # Update image tags in deployment files
-        sed -i "s|:latest|:${{ github.sha }}|g" project1/backend-deployment.yaml
-        sed -i "s|:latest|:${{ github.sha }}|g" project1/frontend-deployment.yaml
+        sed -i "s|101553892293.dkr.ecr.ap-northeast-2.amazonaws.com/back:latest|$ECR_REGISTRY/${{ env.ECR_BACKEND_REPO }}:$IMAGE_TAG|g" backend-deployment-temp.yaml
+        sed -i "s|101553892293.dkr.ecr.ap-northeast-2.amazonaws.com/front:latest|$ECR_REGISTRY/${{ env.ECR_FRONTEND_REPO }}:$IMAGE_TAG|g" frontend-deployment-temp.yaml
         
         # Apply Kubernetes manifests
         kubectl apply -f project1/database-config.yaml
-        kubectl apply -f project1/backend-deployment.yaml
-        kubectl apply -f project1/frontend-deployment.yaml
+        kubectl apply -f backend-deployment-temp.yaml
+        kubectl apply -f frontend-deployment-temp.yaml
         kubectl apply -f project1/ingress.yaml
+        
+        # Clean up temporary files
+        rm backend-deployment-temp.yaml frontend-deployment-temp.yaml
         
         # Wait for deployments to be ready
         kubectl rollout status deployment/backend --timeout=300s
