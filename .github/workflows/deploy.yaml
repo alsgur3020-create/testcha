@@ -10,7 +10,7 @@ env:
   AWS_REGION: ap-northeast-2
   ECR_BACKEND_REPO: back
   ECR_FRONTEND_REPO: front
-
+  EKS_CLUSTER_NAME: my-eks-cluster
 
 permissions:
   id-token: write
@@ -118,11 +118,36 @@ jobs:
         
         echo "Frontend image pushed: $ECR_REGISTRY/${{ env.ECR_FRONTEND_REPO }}:$IMAGE_TAG"
     
-    - name: Update kubeconfig
+    - name: Check EKS cluster availability
+      id: check-eks
       run: |
-        aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ secrets.EKS_CLUSTER_NAME }}
+        echo "=== EKS 클러스터 확인 ==="
+        if [ -z "${{ secrets.EKS_CLUSTER_NAME }}" ]; then
+          echo "⚠️  EKS_CLUSTER_NAME Secret이 설정되지 않았습니다."
+          echo "EKS 배포를 건너뜁니다."
+          echo "skip_eks=true" >> $GITHUB_OUTPUT
+        else
+          echo "EKS 클러스터 이름: ${{ secrets.EKS_CLUSTER_NAME }}"
+          if aws eks describe-cluster --region ${{ env.AWS_REGION }} --name "${{ secrets.EKS_CLUSTER_NAME }}" > /dev/null 2>&1; then
+            echo "✅ EKS 클러스터를 찾았습니다."
+            echo "skip_eks=false" >> $GITHUB_OUTPUT
+          else
+            echo "❌ EKS 클러스터를 찾을 수 없습니다: ${{ secrets.EKS_CLUSTER_NAME }}"
+            echo "사용 가능한 클러스터 목록:"
+            aws eks list-clusters --region ${{ env.AWS_REGION }} || echo "클러스터 목록을 가져올 수 없습니다."
+            echo "skip_eks=true" >> $GITHUB_OUTPUT
+          fi
+        fi
+    
+    - name: Update kubeconfig
+      if: steps.check-eks.outputs.skip_eks == 'false'
+      run: |
+        echo "=== EKS 클러스터 연결 ==="
+        aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name "${{ secrets.EKS_CLUSTER_NAME }}"
+        echo "✅ kubeconfig 업데이트 완료"
     
     - name: Deploy to EKS
+      if: steps.check-eks.outputs.skip_eks == 'false'
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
@@ -149,6 +174,7 @@ jobs:
         kubectl rollout status deployment/frontend --timeout=300s
     
     - name: Verify deployment
+      if: steps.check-eks.outputs.skip_eks == 'false'
       run: |
         kubectl get pods -l app=backend
         kubectl get pods -l app=frontend
@@ -156,6 +182,7 @@ jobs:
         kubectl get ingress
         
     - name: Run smoke tests
+      if: steps.check-eks.outputs.skip_eks == 'false'
       run: |
         # Get the load balancer URL
         LB_URL=$(kubectl get ingress app-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
@@ -169,4 +196,19 @@ jobs:
         
         # Test frontend
         curl -f "http://$LB_URL/" || echo "Frontend check failed"
+    
+    - name: Summary
+      run: |
+        echo "=== 배포 요약 ==="
+        echo "✅ Docker 이미지 빌드 및 ECR 푸시 완료"
+        if [ "${{ steps.check-eks.outputs.skip_eks }}" == "true" ]; then
+          echo "⚠️  EKS 배포 건너뜀 (클러스터 미설정 또는 미존재)"
+          echo ""
+          echo "EKS 배포를 위해 다음을 확인하세요:"
+          echo "1. EKS 클러스터가 생성되어 있는지 확인"
+          echo "2. GitHub Secrets에 EKS_CLUSTER_NAME 설정"
+          echo "3. IAM Role에 EKS 권한 추가"
+        else
+          echo "✅ EKS 배포 완료"
+        fi
         

@@ -21,26 +21,21 @@ vpc:
         id: "subnet-02ed305a4f285318c"
 
 nodeGroups:
-  - name: worker-nodes
+  - name: app-node
     instanceType: t3.medium
-    desiredCapacity: 2
+    desiredCapacity: 1
     minSize: 1
-    maxSize: 4
+    maxSize: 1
     volumeSize: 20
     volumeType: gp3
     ssh:
       allow: true
+      publicKeyName: "eks-node-key"
     iam:
       withAddonPolicies:
-        imageBuilder: true
-        autoScaler: true
-        ebs: true
-        efs: true
-        albIngress: true
-        cloudWatch: true
+        awsLoadBalancerController: true
 
 addons:
   - name: vpc-cni
   - name: coredns
   - name: kube-proxy
-  - name: aws-ebs-csi-driver
