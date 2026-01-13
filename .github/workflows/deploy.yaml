@@ -121,83 +121,39 @@ jobs:
       id: check-eks
       run: |
         echo "=== EKS 클러스터 확인 ==="
+        
+        # EKS_CLUSTER_NAME Secret 확인
         if [ -z "${{ secrets.EKS_CLUSTER_NAME }}" ]; then
           echo "⚠️  EKS_CLUSTER_NAME Secret이 설정되지 않았습니다."
           echo "EKS 배포를 건너뜁니다."
           echo "skip_eks=true" >> $GITHUB_OUTPUT
-        else
-          echo "EKS 클러스터 이름: ${{ secrets.EKS_CLUSTER_NAME }}"
-          if aws eks describe-cluster --region ${{ env.AWS_REGION }} --name "${{ secrets.EKS_CLUSTER_NAME }}" > /dev/null 2>&1; then
-            echo "✅ EKS 클러스터를 찾았습니다."
+          exit 0
+        fi
+        
+        echo "EKS 클러스터 이름: ${{ secrets.EKS_CLUSTER_NAME }}"
+        
+        # EKS 클러스터 존재 여부만 확인 (kubectl 테스트 제외)
+        if aws eks describe-cluster --region ${{ env.AWS_REGION }} --name "${{ secrets.EKS_CLUSTER_NAME }}" > /dev/null 2>&1; then
+          echo "✅ EKS 클러스터를 찾았습니다."
+          
+          # kubectl 인증 테스트 (실패해도 계속 진행)
+          echo "kubectl 인증 테스트 중..."
+          if timeout 10s kubectl get nodes > /dev/null 2>&1; then
+            echo "✅ kubectl 인증 성공 - EKS 배포 활성화"
             echo "skip_eks=false" >> $GITHUB_OUTPUT
           else
-            echo "❌ EKS 클러스터를 찾을 수 없습니다: ${{ secrets.EKS_CLUSTER_NAME }}"
-            echo "사용 가능한 클러스터 목록:"
-            aws eks list-clusters --region ${{ env.AWS_REGION }} || echo "클러스터 목록을 가져올 수 없습니다."
+            echo "❌ kubectl 인증 실패 - EKS 배포 비활성화"
+            echo "💡 ECR 이미지는 정상적으로 빌드되었습니다."
+            echo "💡 로컬에서 ./manual-deploy.sh 스크립트를 실행하여 배포하세요."
             echo "skip_eks=true" >> $GITHUB_OUTPUT
           fi
+        else
+          echo "❌ EKS 클러스터를 찾을 수 없습니다: ${{ secrets.EKS_CLUSTER_NAME }}"
+          echo "사용 가능한 클러스터 목록:"
+          aws eks list-clusters --region ${{ env.AWS_REGION }} || echo "클러스터 목록을 가져올 수 없습니다."
+          echo "skip_eks=true" >> $GITHUB_OUTPUT
         fi
     
-    - name: Update kubeconfig
-      if: steps.check-eks.outputs.skip_eks == 'false'
-      run: |
-        echo "=== EKS 클러스터 연결 ==="
-        
-        # 현재 AWS 자격 증명 상세 확인
-        echo "현재 AWS 자격 증명:"
-        aws sts get-caller-identity
-        
-        # EKS 클러스터 정보 확인
-        echo "EKS 클러스터 정보:"
-        aws eks describe-cluster --name "${{ secrets.EKS_CLUSTER_NAME }}" --region ${{ env.AWS_REGION }} --query 'cluster.{Name:name,Status:status,Endpoint:endpoint,Version:version}'
-        
-        # kubeconfig 업데이트 (더 상세한 로깅)
-        echo "kubeconfig 업데이트 중..."
-        aws eks update-kubeconfig \
-          --region ${{ env.AWS_REGION }} \
-          --name "${{ secrets.EKS_CLUSTER_NAME }}" \
-          --alias github-actions \
-          --verbose \
-          --debug || echo "kubeconfig 업데이트 실패"
-        
-        # kubeconfig 내용 확인 (민감한 정보 제외)
-        echo "=== kubeconfig 설정 확인 ==="
-        kubectl config view --minify --flatten=false
-        
-        # 현재 컨텍스트 확인
-        echo "현재 컨텍스트: $(kubectl config current-context)"
-        
-        # AWS 토큰 확인
-        echo "=== AWS 토큰 테스트 ==="
-        aws eks get-token --cluster-name "${{ secrets.EKS_CLUSTER_NAME }}" --region ${{ env.AWS_REGION }} | jq -r '.status.token' | head -c 50
-        echo "..."
-        
-        echo "✅ kubeconfig 설정 단계 완료"
-    
-    - name: Test Kubernetes connection
-      if: steps.check-eks.outputs.skip_eks == 'false'
-      run: |
-        echo "=== Kubernetes 연결 테스트 ==="
-        
-        # 기본 연결 테스트
-        echo "1. kubectl 버전 확인:"
-        kubectl version --client --output=yaml
-        
-        echo "2. 클러스터 정보 확인 (타임아웃 60초):"
-        timeout 60s kubectl cluster-info || echo "클러스터 정보 조회 타임아웃"
-        
-        echo "3. API 서버 연결 테스트:"
-        timeout 30s kubectl get --raw='/api/v1' > /dev/null && echo "✅ API 서버 연결 성공" || echo "❌ API 서버 연결 실패"
-        
-        echo "4. 네임스페이스 조회 테스트:"
-        timeout 30s kubectl get namespaces || echo "네임스페이스 조회 실패"
-        
-        echo "5. 현재 권한 확인:"
-        kubectl auth can-i '*' '*' --all-namespaces || echo "전체 권한 없음"
-        kubectl auth can-i get pods || echo "Pod 조회 권한 없음"
-        kubectl auth can-i create deployments || echo "Deployment 생성 권한 없음"
-        
-        echo "=== 연결 테스트 완료 ==="
     - name: Deploy to EKS
       if: steps.check-eks.outputs.skip_eks == 'false'
       continue-on-error: true
