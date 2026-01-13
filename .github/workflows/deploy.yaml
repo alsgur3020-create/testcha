@@ -10,8 +10,7 @@ env:
   AWS_REGION: ap-northeast-2
   ECR_BACKEND_REPO: back
   ECR_FRONTEND_REPO: front
-  EKS_CLUSTER_NAME: my-eks-cluster
-
+  
 permissions:
   id-token: write
   contents: read
