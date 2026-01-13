@@ -196,6 +196,7 @@ jobs:
         
         # Test frontend
         curl -f "http://$LB_URL/" || echo "Frontend check failed"
+<<<<<<< HEAD
     
     - name: Summary
       run: |
@@ -212,3 +213,6 @@ jobs:
           echo "✅ EKS 배포 완료"
         fi
         
+=======
+        
+>>>>>>> a0f393eaa33cc22a75e86c1130a7ee47122261d9
