@@ -1,0 +1,9 @@
+# Terraform 변수 설정 예시
+
+# GitHub 정보
+github_username   = "your-github-username"
+github_repository = "your-repository-name"
+
+# AWS 정보
+aws_region     = "ap-northeast-2"
+aws_account_id = "101553892293"

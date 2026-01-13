@@ -11,6 +11,11 @@ env:
   ECR_BACKEND_REPO: back
   ECR_FRONTEND_REPO: front
 
+# OIDC 토큰 권한 설정 (IAM Role 사용을 위해 필수)
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -42,42 +47,20 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Debug GitHub Secrets
-      run: |
-        echo "=== GitHub Secrets 확인 ==="
-        echo "AWS_ACCESS_KEY_ID가 설정되었는지: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}"
-        echo "AWS_SECRET_ACCESS_KEY가 설정되었는지: ${{ secrets.AWS_SECRET_ACCESS_KEY != '' }}"
-        echo "AWS_REGION: ${{ env.AWS_REGION }}"
-        echo "EKS_CLUSTER_NAME이 설정되었는지: ${{ secrets.EKS_CLUSTER_NAME != '' }}"
-        
-        if [ "${{ secrets.AWS_ACCESS_KEY_ID }}" = "" ]; then
-          echo "❌ AWS_ACCESS_KEY_ID Secret이 설정되지 않았습니다!"
-          exit 1
-        else
-          echo "✅ AWS_ACCESS_KEY_ID Secret이 설정되었습니다"
-        fi
-        
-        if [ "${{ secrets.AWS_SECRET_ACCESS_KEY }}" = "" ]; then
-          echo "❌ AWS_SECRET_ACCESS_KEY Secret이 설정되지 않았습니다!"
-          exit 1
-        else
-          echo "✅ AWS_SECRET_ACCESS_KEY Secret이 설정되었습니다"
-        fi
-    
-    - name: Configure AWS credentials
+    - name: Configure AWS credentials using OIDC
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        role-session-name: GitHubActions-${{ github.run_id }}
         aws-region: ${{ env.AWS_REGION }}
         mask-aws-account-id: false
     
     - name: Verify AWS credentials
       run: |
-        echo "Verifying AWS credentials..."
+        echo "=== AWS 자격 증명 확인 ==="
         aws sts get-caller-identity
         echo "AWS Region: $AWS_REGION"
-        echo "Current AWS Account ID: $(aws sts get-caller-identity --query Account --output text)"
+        echo "Assumed Role: $(aws sts get-caller-identity --query Arn --output text)"
     
     - name: Login to ECR
       id: login-ecr
