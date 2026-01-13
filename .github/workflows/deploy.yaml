@@ -9,6 +9,9 @@ on:
 env:
   AWS_REGION: ap-northeast-2
   ECR_REGISTRY: 101553892293.dkr.ecr.ap-northeast-2.amazonaws.com
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
 
 jobs:
   test:
@@ -43,23 +46,25 @@ jobs:
     
     - name: Debug GitHub Secrets
       run: |
-        echo "Checking if secrets are available..."
-        echo "AWS_ACCESS_KEY_ID length: ${#AWS_ACCESS_KEY_ID}"
-        echo "AWS_SECRET_ACCESS_KEY length: ${#AWS_SECRET_ACCESS_KEY}"
-        echo "AWS_REGION: $AWS_REGION"
-        if [ -z "$AWS_ACCESS_KEY_ID" ]; then
-          echo "❌ AWS_ACCESS_KEY_ID is not set"
+        echo "=== GitHub Secrets 확인 ==="
+        echo "AWS_ACCESS_KEY_ID가 설정되었는지: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}"
+        echo "AWS_SECRET_ACCESS_KEY가 설정되었는지: ${{ secrets.AWS_SECRET_ACCESS_KEY != '' }}"
+        echo "AWS_REGION: ${{ env.AWS_REGION }}"
+        echo "EKS_CLUSTER_NAME이 설정되었는지: ${{ secrets.EKS_CLUSTER_NAME != '' }}"
+        
+        if [ "${{ secrets.AWS_ACCESS_KEY_ID }}" = "" ]; then
+          echo "❌ AWS_ACCESS_KEY_ID Secret이 설정되지 않았습니다!"
+          exit 1
         else
-          echo "✅ AWS_ACCESS_KEY_ID is set"
+          echo "✅ AWS_ACCESS_KEY_ID Secret이 설정되었습니다"
         fi
-        if [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
-          echo "❌ AWS_SECRET_ACCESS_KEY is not set"
+        
+        if [ "${{ secrets.AWS_SECRET_ACCESS_KEY }}" = "" ]; then
+          echo "❌ AWS_SECRET_ACCESS_KEY Secret이 설정되지 않았습니다!"
+          exit 1
         else
-          echo "✅ AWS_SECRET_ACCESS_KEY is set"
+          echo "✅ AWS_SECRET_ACCESS_KEY Secret이 설정되었습니다"
         fi
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
     
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
