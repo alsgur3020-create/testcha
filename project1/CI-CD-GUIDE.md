@@ -3,6 +3,114 @@
 ## 개요
 이 프로젝트는 AWS EKS에 3-tier 애플리케이션을 자동 배포하는 CI/CD 파이프라인을 제공합니다.
 
+## GitHub Actions 실패 시 로그 확인 방법
+
+### 1. 웹 인터페이스에서 로그 확인
+1. GitHub 리포지토리 → **Actions** 탭
+2. 실패한 워크플로우 클릭 (❌ 표시)
+3. 실패한 Job 클릭 (예: `build-and-deploy`)
+4. 실패한 Step 클릭하여 상세 로그 확인
+
+### 2. 일반적인 실패 원인
+
+#### A. AWS 인증 실패
+```
+Error: Could not load credentials from any providers
+```
+**해결방법:**
+- GitHub Secrets 확인: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
+- IAM 사용자 권한 확인
+
+#### B. ECR 권한 오류
+```
+Error: denied: User is not authorized to perform: ecr:BatchCheckLayerAvailability
+```
+**해결방법:**
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:GetAuthorizationToken",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+        "ecr:PutImage",
+        "ecr:CreateRepository",
+        "ecr:DescribeRepositories"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+#### C. EKS 접근 오류
+```
+Error: You must be logged in to the server (Unauthorized)
+```
+**해결방법:**
+1. EKS 클러스터의 aws-auth ConfigMap 확인
+2. IAM 사용자에게 EKS 권한 추가
+
+#### D. Docker 빌드 실패
+```
+Error: failed to solve: failed to read dockerfile
+```
+**해결방법:**
+- Dockerfile 경로 확인
+- 파일 권한 확인
+- 빌드 컨텍스트 확인
+
+### 3. 디버깅을 위한 추가 로그 활성화
+
+워크플로우에 디버그 스텝 추가:
+
+```yaml
+- name: Debug Environment
+  run: |
+    echo "Current directory: $(pwd)"
+    echo "Files in current directory:"
+    ls -la
+    echo "AWS CLI version:"
+    aws --version
+    echo "Docker version:"
+    docker --version
+    echo "kubectl version:"
+    kubectl version --client
+```
+
+### 4. 로컬에서 테스트하는 방법
+
+#### Docker 이미지 빌드 테스트
+```bash
+# 백엔드 이미지 빌드
+cd project1/backend
+docker build -t test-backend .
+
+# 프론트엔드 이미지 빌드  
+cd ../frontend
+docker build -t test-frontend .
+```
+
+#### AWS CLI 테스트
+```bash
+# AWS 인증 확인
+aws sts get-caller-identity
+
+# ECR 로그인 테스트
+aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin <account-id>.dkr.ecr.ap-northeast-2.amazonaws.com
+
+# EKS 접근 테스트
+aws eks update-kubeconfig --region ap-northeast-2 --name <cluster-name>
+kubectl get nodes
+```
+
 ## 사전 준비사항
 
 ### 1. AWS 리소스
@@ -11,17 +119,69 @@
 - RDS 데이터베이스 (선택사항)
 - ALB Ingress Controller 설치
 
-### 2. GitHub Secrets 설정
-리포지토리 Settings > Secrets and variables > Actions에서 다음 값들을 설정하세요:
+### 2. GitHub Secrets 설정 (상세 가이드)
+
+**단계별 설정:**
+
+1. **GitHub 리포지토리 접근**
+   - GitHub에서 해당 리포지토리로 이동
+   - 상단 메뉴에서 **"Settings"** 클릭
+   - 왼쪽 사이드바에서 **"Secrets and variables"** → **"Actions"** 클릭
+
+2. **Repository Secrets 추가**
+   - **"New repository secret"** 버튼 클릭
+   - 다음 Secrets를 하나씩 추가:
 
 ```
-AWS_ACCESS_KEY_ID: AKIA...
-AWS_SECRET_ACCESS_KEY: your-secret-key
-AWS_REGION: ap-northeast-2
-EKS_CLUSTER_NAME: your-cluster-name
+Name: AWS_ACCESS_KEY_ID
+Secret: AKIA로 시작하는 액세스 키
+
+Name: AWS_SECRET_ACCESS_KEY
+Secret: 40자리 시크릿 키
+
+Name: AWS_REGION
+Secret: ap-northeast-2
+
+Name: EKS_CLUSTER_NAME
+Secret: 실제 EKS 클러스터 이름
 ```
 
-### 3. ECR 리포지토리 생성
+3. **AWS 액세스 키 생성 방법**
+   ```bash
+   # AWS Console에서:
+   # 1. IAM → Users → 사용자 선택 → Security credentials
+   # 2. Access keys → Create access key
+   # 3. Use case: Command Line Interface (CLI)
+   # 4. 생성된 키를 GitHub Secrets에 추가
+   ```
+
+**⚠️ 보안 주의사항:**
+- 액세스 키를 절대 코드에 하드코딩하지 마세요
+- `.env` 파일을 Git에 커밋하지 마세요
+- 정기적으로 액세스 키를 로테이션하세요
+
+### 3. 필요한 IAM 권한
+GitHub Actions에서 사용할 IAM 사용자에게 다음 권한이 필요합니다:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:*",
+        "eks:DescribeCluster",
+        "eks:ListClusters",
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+### 4. ECR 리포지토리 생성
 ```bash
 aws ecr create-repository --repository-name front --region ap-northeast-2
 aws ecr create-repository --repository-name back --region ap-northeast-2
