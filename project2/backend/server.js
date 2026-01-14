@@ -18,13 +18,28 @@ app.use(cors({
 
 // Redis 클라이언트 설정
 const redisClient = redis.createClient({
-  host: process.env.REDIS_HOST || 'redis-service',
-  port: process.env.REDIS_PORT || 6379,
+  socket: {
+    host: process.env.REDIS_HOST || 'redis-service',
+    port: parseInt(process.env.REDIS_PORT) || 6379
+  },
   password: process.env.REDIS_PASSWORD
 });
 
 const pubClient = redisClient.duplicate();
 const subClient = redisClient.duplicate();
+
+// Redis 에러 핸들러 추가
+redisClient.on('error', (err) => {
+  console.error('Redis Client Error:', err);
+});
+
+pubClient.on('error', (err) => {
+  console.error('Redis Pub Client Error:', err);
+});
+
+subClient.on('error', (err) => {
+  console.error('Redis Sub Client Error:', err);
+});
 
 // Redis 연결
 Promise.all([
@@ -33,7 +48,9 @@ Promise.all([
   subClient.connect()
 ]).then(() => {
   console.log('Redis clients connected');
-}).catch(console.error);
+}).catch((err) => {
+  console.error('Redis connection failed:', err);
+});
 
 // 세션 설정
 app.use(session({
