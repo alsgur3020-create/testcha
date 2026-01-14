@@ -5,7 +5,7 @@ WORKDIR /app
 # package.json과 package-lock.json 복사
 COPY package*.json ./
 
-# 의존성 설치
+# 의존성 설치 (npm ci는 package-lock.json 기반으로 정확한 버전 설치)
 RUN npm ci --only=production
 
 # 애플리케이션 코드 복사
