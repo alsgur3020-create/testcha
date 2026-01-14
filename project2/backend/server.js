@@ -6,6 +6,7 @@ const { createAdapter } = require('@socket.io/redis-adapter');
 const session = require('express-session');
 const RedisStore = require('connect-redis').default;
 const cors = require('cors');
+const mysql = require('mysql2/promise');
 
 const app = express();
 const server = http.createServer(app);
@@ -15,6 +16,67 @@ app.use(cors({
   origin: process.env.FRONTEND_URL || "http://localhost:8080",
   credentials: true
 }));
+
+// MySQL 연결 풀 생성
+const pool = mysql.createPool({
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME || 'myapp',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
+
+// MySQL 연결 테스트 및 테이블 생성
+async function initDatabase() {
+  try {
+    const connection = await pool.getConnection();
+    console.log('MySQL connected successfully');
+    
+    // users 테이블 생성
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        username VARCHAR(50) NOT NULL UNIQUE,
+        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_username (username)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    
+    // chat_messages 테이블 생성 (Redis 백업용)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        room_id VARCHAR(100) NOT NULL,
+        username VARCHAR(50) NOT NULL,
+        message TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_room_created (room_id, created_at),
+        INDEX idx_username (username)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    
+    // chat_rooms 테이블 생성
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS chat_rooms (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        room_id VARCHAR(100) NOT NULL UNIQUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_room_id (room_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    
+    console.log('Database tables initialized');
+    connection.release();
+  } catch (error) {
+    console.error('Database initialization error:', error);
+  }
+}
+
+initDatabase();
 
 // Redis 클라이언트 설정
 const redisClient = redis.createClient({
@@ -84,10 +146,32 @@ io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
   // 사용자가 채팅방에 참여
-  socket.on('join-room', (roomId, username) => {
+  socket.on('join-room', async (roomId, username) => {
     socket.join(roomId);
     socket.username = username;
     socket.roomId = roomId;
+    
+    try {
+      // MySQL에 사용자 저장 (중복 시 last_seen 업데이트)
+      await pool.query(
+        `INSERT INTO users (username, last_seen) 
+         VALUES (?, NOW()) 
+         ON DUPLICATE KEY UPDATE last_seen = NOW()`,
+        [username]
+      );
+      
+      // 채팅방 저장
+      await pool.query(
+        `INSERT INTO chat_rooms (room_id, last_activity) 
+         VALUES (?, NOW()) 
+         ON DUPLICATE KEY UPDATE last_activity = NOW()`,
+        [roomId]
+      );
+      
+      console.log(`User ${username} saved to database`);
+    } catch (error) {
+      console.error('Database save error:', error);
+    }
     
     // 다른 사용자들에게 참여 알림
     socket.to(roomId).emit('user-joined', {
@@ -115,6 +199,17 @@ io.on('connection', (socket) => {
       await redisClient.lTrim(`chat:${socket.roomId}`, 0, 99); // 최근 100개 메시지만 유지
     } catch (error) {
       console.error('Redis save error:', error);
+    }
+
+    // MySQL에도 메시지 저장 (영구 백업)
+    try {
+      await pool.query(
+        `INSERT INTO chat_messages (room_id, username, message, created_at) 
+         VALUES (?, ?, ?, NOW())`,
+        [socket.roomId, socket.username, data.message]
+      );
+    } catch (error) {
+      console.error('Database message save error:', error);
     }
 
     // 같은 방의 모든 사용자에게 메시지 전송
@@ -147,13 +242,71 @@ io.on('connection', (socket) => {
 });
 
 // Health check endpoint
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
+  let dbStatus = 'disconnected';
+  try {
+    await pool.query('SELECT 1');
+    dbStatus = 'connected';
+  } catch (error) {
+    console.error('DB health check failed:', error);
+  }
+  
   res.json({ 
     status: 'WebSocket Chat Server Running', 
     timestamp: new Date(),
     version: process.env.APP_VERSION || '1.0.0',
-    redis: redisClient.isReady ? 'connected' : 'disconnected'
+    redis: redisClient.isReady ? 'connected' : 'disconnected',
+    mysql: dbStatus
   });
+});
+
+// 사용자 목록 API
+app.get('/api/users', async (req, res) => {
+  try {
+    const [users] = await pool.query(
+      'SELECT username, last_seen, created_at FROM users ORDER BY last_seen DESC LIMIT 100'
+    );
+    res.json({ users });
+  } catch (error) {
+    console.error('Get users error:', error);
+    res.status(500).json({ error: 'Failed to get users' });
+  }
+});
+
+// 특정 사용자 정보 API
+app.get('/api/users/:username', async (req, res) => {
+  try {
+    const [users] = await pool.query(
+      'SELECT username, last_seen, created_at FROM users WHERE username = ?',
+      [req.params.username]
+    );
+    if (users.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ user: users[0] });
+  } catch (error) {
+    console.error('Get user error:', error);
+    res.status(500).json({ error: 'Failed to get user' });
+  }
+});
+
+// 채팅방별 메시지 히스토리 API (MySQL에서)
+app.get('/api/messages/:roomId', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 100;
+    const [messages] = await pool.query(
+      `SELECT id, room_id, username, message, created_at 
+       FROM chat_messages 
+       WHERE room_id = ? 
+       ORDER BY created_at DESC 
+       LIMIT ?`,
+      [req.params.roomId, limit]
+    );
+    res.json({ messages: messages.reverse() });
+  } catch (error) {
+    console.error('Get messages error:', error);
+    res.status(500).json({ error: 'Failed to get messages' });
+  }
 });
 
 // 채팅방 목록 API
