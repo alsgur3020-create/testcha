@@ -26,16 +26,16 @@ jobs:
       with:
         node-version: '18'
         cache: 'npm'
-        cache-dependency-path: project1/backend/package.json
+        cache-dependency-path: project2/backend/package.json
     
     - name: Install backend dependencies
       run: |
-        cd project1/backend
+        cd project2/backend
         npm install
     
     - name: Run backend tests
       run: |
-        cd project1/backend
+        cd project2/backend
         npm test
 
   build-and-deploy:
@@ -88,7 +88,7 @@ jobs:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
-        cd project1/backend
+        cd project2/backend
         
         # Build image
         docker build -t $ECR_REGISTRY/${{ env.ECR_BACKEND_REPO }}:$IMAGE_TAG .
@@ -105,7 +105,7 @@ jobs:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
-        cd project1/frontend
+        cd project2/frontend
         
         # Build image
         docker build -t $ECR_REGISTRY/${{ env.ECR_FRONTEND_REPO }}:$IMAGE_TAG .
@@ -257,8 +257,8 @@ jobs:
         
         echo "=== 배포 파일 준비 ==="
         # Create temporary deployment files with updated image tags
-        cp project1/backend-deployment.yaml backend-deployment-temp.yaml
-        cp project1/frontend-deployment.yaml frontend-deployment-temp.yaml
+        cp project2/backend-deployment.yaml backend-deployment-temp.yaml
+        cp project2/frontend-deployment.yaml frontend-deployment-temp.yaml
         
         # Update image tags in deployment files
         sed -i "s|101553892293.dkr.ecr.ap-northeast-2.amazonaws.com/back:latest|$ECR_REGISTRY/${{ env.ECR_BACKEND_REPO }}:$IMAGE_TAG|g" backend-deployment-temp.yaml
@@ -273,7 +273,23 @@ jobs:
         # 각 리소스를 개별적으로 배포
         DEPLOY_SUCCESS=true
         
-        echo "1. Database config 배포..."
+        echo "1. Redis 배포..."
+        if timeout 60s kubectl apply -f project2/redis-deployment.yaml --validate=false; then
+          echo "✅ Redis 배포 성공"
+        else
+          echo "❌ Redis 배포 실패"
+          DEPLOY_SUCCESS=false
+        fi
+        
+        echo "2. App secrets 배포..."
+        if timeout 60s kubectl apply -f project2/app-secrets.yaml --validate=false; then
+          echo "✅ App secrets 배포 성공"
+        else
+          echo "❌ App secrets 배포 실패"
+          DEPLOY_SUCCESS=false
+        fi
+        
+        echo "3. Database config 배포..."
         if timeout 60s kubectl apply -f project1/database-config.yaml --validate=false; then
           echo "✅ Database config 배포 성공"
         else
@@ -281,7 +297,7 @@ jobs:
           DEPLOY_SUCCESS=false
         fi
         
-        echo "2. Backend deployment 배포..."
+        echo "4. Backend deployment 배포..."
         if timeout 60s kubectl apply -f backend-deployment-temp.yaml --validate=false; then
           echo "✅ Backend deployment 배포 성공"
         else
@@ -289,7 +305,7 @@ jobs:
           DEPLOY_SUCCESS=false
         fi
         
-        echo "3. Frontend deployment 배포..."
+        echo "5. Frontend deployment 배포..."
         if timeout 60s kubectl apply -f frontend-deployment-temp.yaml --validate=false; then
           echo "✅ Frontend deployment 배포 성공"
         else
@@ -297,8 +313,8 @@ jobs:
           DEPLOY_SUCCESS=false
         fi
         
-        echo "4. Ingress 배포..."
-        if timeout 60s kubectl apply -f project1/ingress.yaml --validate=false; then
+        echo "6. Ingress 배포..."
+        if timeout 60s kubectl apply -f project2/ingress.yaml --validate=false; then
           echo "✅ Ingress 배포 성공"
         else
           echo "❌ Ingress 배포 실패"
@@ -317,6 +333,7 @@ jobs:
           timeout 30s kubectl get pods || echo "Pod 상태 조회 실패"
           
           echo "=== 배포 완료 대기 ==="
+          kubectl rollout status deployment/redis --timeout=600s || echo "Redis 배포 타임아웃 (정상일 수 있음)"
           kubectl rollout status deployment/backend --timeout=600s || echo "Backend 배포 타임아웃 (정상일 수 있음)"
           kubectl rollout status deployment/frontend --timeout=600s || echo "Frontend 배포 타임아웃 (정상일 수 있음)"
           
@@ -325,13 +342,6 @@ jobs:
           echo "❌ 일부 리소스 배포 실패"
           echo "deploy_success=false" >> $GITHUB_OUTPUT
         fi
-        kubectl get pods --timeout=30s || echo "Pod 상태 조회 실패"
-        
-        echo "=== 배포 완료 대기 (관대한 타임아웃) ==="
-        kubectl rollout status deployment/backend --timeout=600s || echo "Backend 배포 타임아웃 (정상일 수 있음)"
-        kubectl rollout status deployment/frontend --timeout=600s || echo "Frontend 배포 타임아웃 (정상일 수 있음)"
-        
-        echo "✅ 배포 프로세스 완료"
     
     - name: Verify deployment
       if: steps.check-eks.outputs.skip_eks == 'false'
